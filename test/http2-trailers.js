@@ -65,3 +65,52 @@ test('Should handle http2 trailers', async t => {
 
   await t.completed
 })
+
+test('Should deliver the whole body when trailers arrive while the body is paused', async t => {
+  t = tspl(t, { plan: 3 })
+
+  const size = 2 * 1024 * 1024
+  const server = createSecureServer(pem)
+  let client = null
+
+  after(async () => {
+    await client?.close()
+    await new Promise(resolve => server.close(resolve))
+  })
+
+  server.on('stream', (stream) => {
+    stream.respond({ ':status': 200 }, { waitForTrailers: true })
+    stream.on('wantTrailers', () => {
+      stream.sendTrailers({ 'x-trailer': 'hello' })
+    })
+    stream.end(Buffer.alloc(size, 'a'))
+  })
+
+  await once(server.listen(0, '127.0.0.1'), 'listening')
+
+  client = new Client(`https://${server.address().address}:${server.address().port}`, {
+    connect: {
+      rejectUnauthorized: false
+    },
+    allowH2: true
+  })
+
+  const { statusCode, body, trailers } = await client.request({
+    path: '/',
+    method: 'GET'
+  })
+
+  // A reader slower than the network pauses the stream, so DATA frames wait in its
+  // buffer when the trailers arrive. They must still reach the body.
+  let received = 0
+  for await (const chunk of body) {
+    received += chunk.length
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+
+  t.strictEqual(statusCode, 200)
+  t.strictEqual(received, size)
+  t.deepStrictEqual(trailers, { 'x-trailer': 'hello' })
+
+  await t.completed
+})

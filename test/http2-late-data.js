@@ -156,14 +156,15 @@ test('Should ignore late http2 data after request completion', async (t) => {
 
   stream.emit('response', { ':status': 200 })
   stream.emit('trailers', { 'x-trailer': 'hello' })
+  stream.emit('end')
 
+  // Data that arrives once the request is complete is ignored. (Data emitted
+  // between 'trailers' and 'end' is not late: it was buffered before the
+  // trailers arrived, so it belongs to the body.)
   t.doesNotThrow(() => {
     stream.emit('data', Buffer.from('late-data'))
   })
 
-  stream.emit('end')
-
-  // Completion is deferred to onRequestStreamClose (fires on 'close')
   stream.emit('close')
 
   t.strictEqual(onCompleteCalls, 1)
